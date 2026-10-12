@@ -30,7 +30,7 @@ https://discord.gg/M9cbCqc8sF
   Starting Armour, Progressive Behead The Undead Score Multiplier), and weapon buffs filling the
   leftover locations.
 * **Locations:** Bronze/Silver/Gold/Platinum trophies on every mission, story level completions per
-  difficulty, 70 story objectives, the Temporal Uplink cartridges, optional Anaconda, RetroRacer and
+  difficulty, 69 story objectives, the Temporal Uplink cartridges, optional Anaconda, RetroRacer and
   AstroLander checks, and optional group/league/all-Challenges milestones.
 * **Goals:** complete 2401 Space Station (optionally needing a number of story levels and trophies
   first), or a Trophy Hunt: a chosen grade of trophy on every Arcade League mission, every Challenge,
