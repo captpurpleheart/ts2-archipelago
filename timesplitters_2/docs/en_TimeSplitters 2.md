@@ -69,7 +69,7 @@ Only the North American GameCube version (game ID `GTSE4F`) is supported.
 * Story objectives: each objective is one check, on any difficulty where it appears, at the
   moment the game marks it complete. Optional objectives count the same as main ones (for
   example "Burn All Evidence in the Filing Cabinets", optional on Easy and Normal, main on Hard).
-  70 in all.
+  69 in all.
 * Temporal Uplink cartridges: picking up the Anaconda cartridge in 1990 Siberia, the RetroRacer
   cartridge in 2315 Robot Factory (Hard only; excluded with Exclude Hard Story) and the
   AstroLander cartridge in 2019 NeoTokyo. The games themselves are unlocked by the items

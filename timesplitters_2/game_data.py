@@ -23,7 +23,7 @@ UNLOCKS     The game decides whether something is unlocked by evaluating a 5-wor
 from dataclasses import dataclass
 
 GAME_NAME = "TimeSplitters 2"
-WORLD_VERSION = "1.0.0"     # keep in step with archipelago.json
+WORLD_VERSION = "1.0.1"     # keep in step with archipelago.json
 
 GAME_ID_ADDRESS = 0x80000000
 GAME_ID: bytes | None = b"GTSE4F"
@@ -419,7 +419,9 @@ PROGRESSIVE_STORY_ITEM_NAME = "Progressive Story Level"
 #   +0x1C state     0 before the level is loaded, 1 not given yet, 2 active, 5 completed
 # One record serves every difficulty, so an objective is one check however it is played.
 # Two records are not used on any difficulty and are left out: Chicago "Gain access to the
-# Sunrise Nightclub" and Wild West "Fight off the Colonel's troops until he surrenders".
+# Sunrise Nightclub" and Wild West "Fight off the Colonel's troops until he surrenders". Chicago
+# "Stop the informant making the call" (record 4) is marked optional on every difficulty but the
+# level never gives it (checked in game), so it is left out too.
 OBJECTIVE_STATE_OFFSET = 0x1C
 OBJECTIVE_COMPLETED = 5
 # (level, record number, record address, text ID, location name, role on Easy/Normal/Hard)
@@ -438,7 +440,6 @@ STORY_OBJECTIVES: tuple[tuple[int, int, int, int, str, tuple[int, int, int]], ..
     (1, 1, 0x802FE91C, 0x431, 'Rendezvous with Your Informant', (0, 0, 0)),
     (1, 2, 0x802FE940, 0x432, 'Protect Marco as He Returns to His Hideout', (0, 0, 0)),
     (1, 3, 0x802FE964, 0x433, 'Obtain the Nightclub Pass Card', (0, 0, 0)),
-    (1, 4, 0x802FE988, 0x434, 'Stop the Informant Making the Call', (1, 1, 1)),
     (1, 6, 0x802FE9D0, 0x436, "Prevent Tony's Brother from Escaping", (1, 1, 0)),
     (1, 7, 0x802FE9F4, 0x437, 'Eliminate Big Tony', (0, 0, 0)),
     (1, 8, 0x802FEA18, 0x426, 'Retrieve the Time Crystal', (0, 0, 0)),
