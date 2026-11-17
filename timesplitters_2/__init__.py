@@ -174,6 +174,29 @@ class ExcludePlatinumTrophies(OptionSet):
     valid_keys_casefold = True
 
 
+class Ts2DeathLink(DeathLink):
+    """
+    When you fail a mission, everyone else with Death Link on dies; when they die, the story level
+    you are playing fails, or you die in an Arcade League mission or Challenge. Failing means dying in a Story level, failing a Story objective, or failing
+    an Arcade League mission or Challenge (finishing below the trophy you need counts). In Arcade
+    League missions where you respawn, deaths are counted with Death Link Amnesty instead.
+    """
+    display_name = "Death Link"
+
+
+class DeathLinkAmnesty(Range):
+    """
+    Arcade League missions only: how many times you can die in one mission before a Death Link is
+    sent (1 = every death). The count starts again with every mission, including a restart.
+    Story Mode and Challenges are not affected: there a death fails the mission, and a failed
+    mission always sends a Death Link. Does nothing unless Death Link is on.
+    """
+    display_name = "Death Link Amnesty (Arcade League)"
+    range_start = 1
+    range_end = 5
+    default = 3
+
+
 class EasierTopShot(DefaultOnToggle):
     """Easier Platinum time for Top Shot: come 1st within 2:00 (normally 1:10). Silver 4:00 and Gold
     3:00 stay the same."""
@@ -261,6 +284,54 @@ class IncludeWeaponBuffs(DefaultOnToggle):
     display_name = "Include Weapon Buffs"
 
 
+class IncludeDamageResistances(DefaultOnToggle):
+    """
+    Adds damage resistances: Progressive Bullet, Explosive, Fire, Plasma and Melee Damage
+    Resistance, six of each. Every copy takes 10% off that kind of damage you take (up to 60%);
+    enemies are not affected. They fill the locations left after every other item together with
+    the weapon buffs, each resistance twice as likely to be picked as a weapon buff.
+    """
+    display_name = "Include Damage Resistances"
+
+
+class IncludeArchipelagoShop(DefaultOnToggle):
+    """
+    Turns Options > View Cutscenes into the Archipelago Shop ("Options & Shop" > "Archipelago
+    Shop"), where you buy locations with points. Points come from trophies (Bronze 10, Silver 20,
+    Gold 30, Platinum 40, a better trophy counting the ones below it), story levels finished
+    (Easy 15, Normal 35, Hard 50, likewise), every kill (1) and Bronze/Silver/Gold/Platinum Trophy
+    items. Prices: 1-15 points for filler and traps, 5-75 for useful items, 15-200 for progression,
+    85-200 for story levels. Cutscenes can't be watched from that menu.
+    """
+    display_name = "Include Archipelago Shop"
+
+
+class ShopLocations(Choice):
+    """
+    How many shop locations there are. The shop shows 13 at a time; every 13 after the first
+    needs one more Progressive Shop Restock item (one for 26 ... four for 65).
+    """
+    display_name = "How Many Shop Locations"
+    option_13 = 13
+    option_26 = 26
+    option_39 = 39
+    option_52 = 52
+    option_65 = 65
+    default = 13
+
+
+class ShopHints(Choice):
+    """
+    Which shop items are hinted to their owners when you open the shop: none, all of them, or only
+    progression items.
+    """
+    display_name = "Shop Hints"
+    option_none = game_data.SHOP_HINTS_NONE
+    option_all = game_data.SHOP_HINTS_ALL
+    option_progression_only = game_data.SHOP_HINTS_PROGRESSION
+    default = game_data.SHOP_HINTS_PROGRESSION
+
+
 class IncludeCheatTraps(Toggle):
     """
     Adds cheat traps: Big Heads, Small Heads, Big Hands, Fat Characters, Cardboard Characters,
@@ -319,7 +390,8 @@ class Ts2Options(PerGameCommonOptions):
     starting_mission_count: StartingMissionCount
     story_mode: StoryMode
     goal: Goal
-    death_link: DeathLink
+    death_link: Ts2DeathLink
+    death_link_amnesty: DeathLinkAmnesty
     story_levels_required: StoryLevelsRequired
     trophies_required: TrophiesRequired
     trophies_required_grade: TrophiesRequiredGrade
@@ -338,6 +410,10 @@ class Ts2Options(PerGameCommonOptions):
     early_behead_multiplier: EarlyBeheadMultiplier
     starting_armour: StartingArmour
     include_weapon_buffs: IncludeWeaponBuffs
+    include_damage_resistances: IncludeDamageResistances
+    include_archipelago_shop: IncludeArchipelagoShop
+    shop_locations: ShopLocations
+    shop_hints: ShopHints
     include_cheat_traps: IncludeCheatTraps
     cheat_trap_duration: CheatTrapDuration
     anaconda_checks: AnacondaChecks
@@ -357,7 +433,8 @@ class Ts2WebWorld(WebWorld):
         )
     ]
     option_groups = [
-        OptionGroup("Game Options", [StartingItem, StartingMissionCount, StoryMode, Goal, DeathLink]),
+        OptionGroup("Game Options", [StartingItem, StartingMissionCount, StoryMode, Goal, Ts2DeathLink,
+                                     DeathLinkAmnesty]),
         OptionGroup("Goal Options - 2401 Space Station", [StoryLevelsRequired, TrophiesRequired,
                                                           TrophiesRequiredGrade]),
         OptionGroup("Goal Options - Trophy Hunt", [TrophyHuntSetting, TrophyGrade, ExcludeStoryMode]),
@@ -367,7 +444,8 @@ class Ts2WebWorld(WebWorld):
                                             AllChallengesMilestone]),
         OptionGroup("Temporal Uplink Settings", [AnacondaChecks, RetroRacerChecks, AstroLanderChecks]),
         OptionGroup("Bonus Items", [BeheadMultiplier, EarlyBeheadMultiplier, StartingArmour,
-                                    IncludeWeaponBuffs]),
+                                    IncludeWeaponBuffs, IncludeDamageResistances]),
+        OptionGroup("Archipelago Shop", [IncludeArchipelagoShop, ShopLocations, ShopHints]),
         OptionGroup("Traps", [IncludeCheatTraps, CheatTrapDuration]),
     ]
 
@@ -399,6 +477,8 @@ class Ts2World(World):
         "Multipliers": set(game_data.MULTIPLIER_ITEM_NAMES),
         "Cartridges": set(game_data.CARTRIDGE_ITEM_NAMES),
         "Weapon Buffs": set(game_data.WEAPON_BUFF_ITEM_NAMES),
+        "Damage Resistances": set(game_data.RESISTANCE_ITEM_NAMES),
+        "Trophy Points": set(game_data.TROPHY_FILLER_ITEM_NAMES),
         "Traps": set(game_data.TRAP_ITEM_NAMES),
         "Bonus Items": set(game_data.MULTIPLIER_ITEM_NAMES) | {game_data.STARTING_ARMOUR_ITEM_NAME},
     }
@@ -409,6 +489,10 @@ class Ts2World(World):
     starting_missions: list[str]
     starting_character: str = ""
     starting_weapon: str = ""
+
+    @property
+    def shop_size(self) -> int:
+        return int(self.options.shop_locations.value) if self.options.include_archipelago_shop else 0
 
     @property
     def progressive(self) -> bool:
@@ -477,6 +561,10 @@ class Ts2World(World):
             self.options.behead_multiplier.value = passthrough.get("behead_multiplier", 0)
             self.options.starting_armour.value = passthrough.get("starting_armour", 0)
             self.options.include_weapon_buffs.value = passthrough.get("include_weapon_buffs", 0)
+            self.options.include_damage_resistances.value = passthrough.get("include_damage_resistances", 0)
+            self.options.include_archipelago_shop.value = passthrough.get("include_archipelago_shop", 0)
+            self.options.shop_locations.value = passthrough.get("shop_locations", 13)
+            self.options.shop_hints.value = passthrough.get("shop_hints", game_data.SHOP_HINTS_ALL)
             self.options.include_cheat_traps.value = passthrough.get("include_cheat_traps", 0)
             self.options.anaconda_checks.value = passthrough.get("anaconda_checks", 0)
             self.options.retroracer_checks.value = passthrough.get("retroracer_checks", 0)
@@ -634,6 +722,19 @@ class Ts2World(World):
             set_rule(entrance, lambda state, cartridge=cartridge: state.has(cartridge, self.player) and any(
                 self.has_story_level(state, k) for k in range(len(game_data.STORY_LEVELS))))
 
+        # The Archipelago Shop: batch b (13 locations) needs b Progressive Shop Restocks. Points can
+        # always be earned (every kill counts), so nothing else is needed.
+        if self.options.include_archipelago_shop:
+            region = Region("Archipelago Shop", self.player, self.multiworld)
+            region.add_locations({game_data.shop_location_name(k): game_data.shop_location_id(k)
+                                  for k in range(self.shop_size)}, Ts2Location)
+            self.multiworld.regions.append(region)
+            menu.connect(region)
+            for k in range(game_data.SHOP_ROWS, self.shop_size):
+                batch = k // game_data.SHOP_ROWS
+                set_rule(self.get_location(game_data.shop_location_name(k)),
+                         lambda state, batch=batch: state.has(game_data.SHOP_RESTOCK_ITEM_NAME, self.player, batch))
+
         # Goal: an event location holding a locked "Victory" item.
         if self.story_goal:
             victory = self.get_location(game_data.STORY_GOAL_LOCATION_NAME)
@@ -657,35 +758,55 @@ class Ts2World(World):
         # Cheats and hats go in before characters, so they are the last to be left out if room
         # runs short.
         names += list(game_data.CARTRIDGE_ITEM_NAMES)
+        names += [game_data.SHOP_RESTOCK_ITEM_NAME] * (self.shop_size // game_data.SHOP_ROWS - 1 if self.shop_size else 0)
         names += list(game_data.CHEAT_ITEM_NAMES) + list(game_data.HAT_ITEM_NAMES)
         names += list(game_data.MAP_ITEM_NAMES) + list(game_data.MODE_ITEM_NAMES)
         names += [name for name in game_data.WEAPON_ITEM_NAMES if name != self.starting_weapon]
         names += [name for name in game_data.CHARACTER_ITEM_NAMES if name != self.starting_character]
         location_count = sum(1 for loc in self.multiworld.get_locations(self.player) if loc.address is not None)
         names = names[:location_count]
-        # Whatever room is left goes to weapon buffs when they are switched on: first every copy
-        # of the ones marked "always in the pool", then a random pick from all the other copies.
-        # "Nothing" only if buffs run out.
+        # Whatever room is left goes to weapon buffs and damage resistances when they are switched
+        # on: first every copy of the buffs marked "always in the pool", then a weighted random
+        # pick from all the other copies (a resistance counts RESISTANCE_WEIGHT times as much as a
+        # buff, as there are far fewer of them). "Nothing" only if they run out.
         # Cheat traps (at most three of each) join the random pick, so they take "Nothing" slots
         # first and are only mixed in with the buffs when there are no "Nothing" slots left.
         always, others = [], []
         if self.options.include_weapon_buffs:
             for name, buff in zip(game_data.WEAPON_BUFF_ITEM_NAMES, game_data.WEAPON_BUFFS):
-                (always if buff[6] else others).extend([name] * buff[5])
-        traps = []
+                if buff[6]:
+                    always.extend([name] * buff[5])
+                else:
+                    others.extend([(name, 1.0)] * buff[5])
+        if self.options.include_damage_resistances:
+            for name in game_data.RESISTANCE_ITEM_NAMES:
+                others.extend([(name, game_data.RESISTANCE_WEIGHT)] * game_data.RESISTANCE_COPIES)
         if self.options.include_cheat_traps:
-            traps = [name for name in game_data.TRAP_ITEM_NAMES for _ in range(game_data.TRAP_COPIES)]
+            others += [(name, 1.0) for name in game_data.TRAP_ITEM_NAMES for _ in range(game_data.TRAP_COPIES)]
+        if self.shop_size:
+            # Trophy items (points for the shop) join the pick too, and take every "Nothing" slot.
+            others += [(self.random_trophy_filler(), game_data.TROPHY_FILLER_WEIGHT)
+                       for _ in range(game_data.TROPHY_FILLER_COPIES)]
         room = max(0, location_count - len(names) - len(always))
-        if len(others) + len(traps) <= room:
-            picked = others + traps
+        if len(others) <= room:
+            picked = [name for name, _weight in others]
         else:
-            pool = others + traps
-            self.random.shuffle(pool)
-            picked = pool[:room]
+            # Weighted pick without replacement: each copy gets the key random() ** (1 / weight);
+            # the highest keys win.
+            keyed = sorted(((self.random.random() ** (1.0 / weight), name) for name, weight in others),
+                           reverse=True)
+            picked = [name for _key, name in keyed[:room]]
         names += always[:max(0, location_count - len(names))]
         names += picked
+        if self.shop_size:
+            names += [self.random_trophy_filler() for _ in range(location_count - len(names))]
         names += [game_data.FILLER_ITEM_NAME] * (location_count - len(names))
         self.multiworld.itempool += [self.create_item(name) for name in names]
+
+    def random_trophy_filler(self) -> str:
+        grades = [t[0] for t in game_data.TROPHY_FILLERS]
+        weights = [t[2] for t in game_data.TROPHY_FILLERS]
+        return game_data.trophy_filler_item_name(self.random.choices(grades, weights)[0])
 
     def create_item(self, name: str) -> Ts2Item:
         if name == game_data.VICTORY_ITEM_NAME:
@@ -698,6 +819,8 @@ class Ts2World(World):
                               else ItemClassification.progression_skip_balancing)
         elif name in game_data.TRAP_ITEM_NAMES:
             classification = ItemClassification.trap
+        elif name == game_data.SHOP_RESTOCK_ITEM_NAME:
+            classification = ItemClassification.progression_skip_balancing
         elif name in game_data.CARTRIDGE_ITEM_NAMES:
             classification = ItemClassification.progression_skip_balancing
         elif name in game_data.MISSION_ITEM_NAMES:
@@ -705,14 +828,44 @@ class Ts2World(World):
                               else ItemClassification.progression_skip_balancing)
         elif (name in game_data.CHEAT_ITEM_NAMES or name in game_data.HAT_ITEM_NAMES
               or name in game_data.MULTIPLIER_ITEM_NAMES or name == game_data.STARTING_ARMOUR_ITEM_NAME
-              or name in game_data.WEAPON_BUFF_ITEM_NAMES):
+              or name in game_data.WEAPON_BUFF_ITEM_NAMES or name in game_data.RESISTANCE_ITEM_NAMES):
             classification = ItemClassification.useful
         else:
             classification = ItemClassification.filler   # characters, maps, modes, weapons and "Nothing"
         return Ts2Item(name, classification, game_data.ITEM_NAME_TO_ID[name], self.player)
 
     def get_filler_item_name(self) -> str:
+        if self.shop_size:
+            return self.random_trophy_filler()
         return game_data.FILLER_ITEM_NAME
+
+    @staticmethod
+    def is_story_level_item(item) -> bool:
+        """A story level of this game or of TimeSplitters: Future Perfect (priced 85 or more)."""
+        if item.game == game_data.GAME_NAME:
+            return item.name in game_data.STORY_ITEM_NAMES or item.name == game_data.PROGRESSIVE_STORY_ITEM_NAME
+        return item.game == game_data.TSFP_GAME_NAME and item.name in game_data.TSFP_STORY_ITEM_NAMES
+
+    def shop_prices(self) -> list[int]:
+        """The price of each shop location, by what ended up there (after the fill)."""
+        import random
+        rng = random.Random(f"{self.multiworld.seed}-{self.player}-shop")
+        prices = []
+        for k in range(self.shop_size):
+            item = self.get_location(game_data.shop_location_name(k)).item
+            if item is None:
+                kind = "filler"
+            elif item.advancement:
+                kind = "progression"
+            elif item.useful:
+                kind = "useful"
+            else:
+                kind = "filler"
+            low, high = game_data.SHOP_PRICES[kind]
+            if item is not None and self.is_story_level_item(item):
+                low, high = game_data.SHOP_STORY_PRICES
+            prices.append(rng.randint(low, high))
+        return prices
 
     def set_rules(self) -> None:
         self.multiworld.completion_condition[self.player] = lambda state: state.has(
@@ -744,9 +897,15 @@ class Ts2World(World):
             "behead_multiplier": int(self.options.behead_multiplier.value),
             "starting_armour": int(self.options.starting_armour.value),
             "include_weapon_buffs": int(bool(self.options.include_weapon_buffs)),
+            "include_damage_resistances": int(bool(self.options.include_damage_resistances)),
+            "include_archipelago_shop": int(bool(self.options.include_archipelago_shop)),
+            "shop_locations": self.shop_size,
+            "shop_prices": self.shop_prices(),
+            "shop_hints": int(self.options.shop_hints.value),
             "include_cheat_traps": int(bool(self.options.include_cheat_traps)),
             "trap_duration": int(self.options.cheat_trap_duration.value),
             "death_link": int(bool(self.options.death_link)),
+            "death_link_amnesty": int(self.options.death_link_amnesty.value),
             "easier_top_shot": int(bool(self.options.easier_top_shot)),
             "anaconda_checks": int(self.options.anaconda_checks.value),
             "retroracer_checks": int(bool(self.options.retroracer_checks)),
