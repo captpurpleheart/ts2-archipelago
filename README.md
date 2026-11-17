@@ -27,19 +27,29 @@ https://discord.gg/M9cbCqc8sF
 * **Items:** the 10 story levels (or Progressive Story Levels), all 45 Arcade League missions and 21
   Challenges, all 126 characters, 9 cheats, the 5 Silly Hats, 16 arcade maps, 16 game modes, 26
   arcade weapons and the three Temporal Uplink cartridges, optional bonus items (Progressive
-  Starting Armour, Progressive Behead The Undead Score Multiplier), and weapon buffs filling the
-  leftover locations.
+  Starting Armour, Progressive Behead The Undead Score Multiplier), and Progressive Damage
+  Resistances (Bullet, Explosive, Fire, Plasma, Melee), weapon buffs and Trophy point items filling
+  the leftover locations.
 * **Locations:** Bronze/Silver/Gold/Platinum trophies on every mission, story level completions per
   difficulty, 69 story objectives, the Temporal Uplink cartridges, optional Anaconda, RetroRacer and
-  AstroLander checks, and optional group/league/all-Challenges milestones.
+  AstroLander checks, optional group/league/all-Challenges milestones, and 13-65 Archipelago Shop
+  locations.
 * **Goals:** complete 2401 Space Station (optionally needing a number of story levels and trophies
   first), or a Trophy Hunt: a chosen grade of trophy on every Arcade League mission, every Challenge,
   or all 66.
+* **Archipelago Shop:** Options > View Cutscenes becomes a shop ("Options & Shop" > "Archipelago
+  Shop") where you buy items with points earned from kills, trophies, story levels and Trophy
+  items. Progressive Shop Restocks bring in more items.
+* **Award screen and announcements:** Archipelago items appear on the after-mission award screen,
+  and items sent and received are announced in game.
 * **Cheat traps (optional):** Big Heads, Small Heads, Fat Characters and other cheats switched on
   for a while during play.
 * **Easier Top Shot:** a 2:00 Platinum time instead of 1:10 (on by default).
-* **Death Link:** failing a mission sends a death; a death received fails the mission you are in.
+* **Death Link:** failing a mission sends a death (in Arcade League, after a chosen number of
+  deaths); a death received kills you (in Story, it fails the level).
 * **Universal Tracker** is supported when installed (optional).
+* **Client:** an Inventory tab shows the shop's points and items, and your resistances, weapon
+  buffs, score multipliers and starting armour.
 
 ## Building from source
 

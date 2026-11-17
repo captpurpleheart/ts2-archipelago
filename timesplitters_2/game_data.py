@@ -23,7 +23,7 @@ UNLOCKS     The game decides whether something is unlocked by evaluating a 5-wor
 from dataclasses import dataclass
 
 GAME_NAME = "TimeSplitters 2"
-WORLD_VERSION = "1.0.1"     # keep in step with archipelago.json
+WORLD_VERSION = "1.2.0"     # keep in step with archipelago.json
 
 GAME_ID_ADDRESS = 0x80000000
 GAME_ID: bytes | None = b"GTSE4F"
@@ -764,6 +764,47 @@ def weapon_buff_value(normal: int, change: float, copies: int) -> int:
 
 WEAPON_BUFF_ITEM_NAMES: tuple[str, ...] = tuple(weapon_buff_item_name(b[0], b[1], b[4]) for b in WEAPON_BUFFS)
 
+# ---- Damage resistances ----
+# Every hit on a character goes through 0x8001E100(event): +0x18 is the damage type, +0x1C the
+# damage (a float), r26 the event and r31 the character being hit. 0x8001E3D8 is the point every
+# hit that will do damage reaches, before the character's own resistances (0x8001F354), armour
+# and health. That instruction (lis r3, 0x803d) is replaced by a jump to a few instructions that,
+# when the character is player 1, multiply the damage by a number kept for its type, do the
+# replaced instruction and jump back. Enemies are not affected. The client only changes the
+# numbers. Dolphin keeps running code it has already compiled, so the level's "playing" entry
+# first runs a routine that clears Dolphin's copy once (icbi) after the jump is written, then
+# carries on into the message code. Confirmed in game with tools/ts2_resistance_test.py.
+# Damage types (42, see the table at 0x803141C0), grouped by what they are:
+# (group, damage types)
+RESISTANCES: tuple[tuple[str, tuple[int, ...]], ...] = (
+    ("Bullet", (1, 2, 3, 27, 29, 35, 36, 40, 41)),          # bullets, pellets, crossbow bolts
+    ("Explosive", (4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 21, 34, 38)),   # 21 = every blast
+    ("Fire", (19, 20, 39)),                                  # Flamethrower, burning, Fire Extinguisher
+    ("Plasma", (22, 23, 24, 25, 26, 28, 30, 31, 32, 33, 37)),   # Lasergun, Plasma, Scifi, ElectroTool
+    ("Melee", (0, 18)),                                      # punches, Brick
+)
+DAMAGE_TYPE_COUNT = 42
+assert sorted(t for _g, types in RESISTANCES for t in types) == list(range(DAMAGE_TYPE_COUNT))
+RESISTANCE_COPIES = 6
+RESISTANCE_STEP = 0.10                       # 10% less damage per copy, so at most 60%
+# Weapon buffs, resistances and cheat traps fill the locations left over together; a resistance
+# copy is this many times as likely to be picked as a weapon buff copy (there are far fewer).
+RESISTANCE_WEIGHT = 2.0
+
+
+def resistance_item_name(group: str) -> str:
+    return f"Progressive {group} Damage Resistance"
+
+
+RESISTANCE_ITEM_NAMES: tuple[str, ...] = tuple(resistance_item_name(group) for group, _types in RESISTANCES)
+RESISTANCE_HOOK = 0x8001E3D8
+RESISTANCE_HOOK_ORIGINAL = 0x3C60803D        # lis r3, 0x803d
+RESISTANCE_CAVE = 0x80002AC0
+RESISTANCE_FLUSH = 0x80002B40                # the level-state routine: icbi once, then the message code
+RESISTANCE_TABLE = 0x80002B80                # 42 floats: damage multiplier by type
+RESISTANCE_FLUSHED = 0x80002C30              # 0 = Dolphin's copy still to be cleared
+RESISTANCE_AREA_END = 0x80002C40
+
 # ---- Cheat traps ----
 # Gameplay code tests a cheat as (0x80469754 AND cheat unlocked AND 0x80469750), bit = entry number
 # in the cheat table: 0x80469754 holds the cheats switched on in the menu (r13-0x672C, set by
@@ -805,11 +846,21 @@ END_LEVEL_ROUTINE = 0x80153804
 DEATH_TRIGGER = 0x80002F60
 DEATH_CAVE = 0x80002F64
 DEATH_TRIGGER_POLLS = 8                      # polls to wait for the game to act on the trigger
+DEATH_KILL_POLLS = 16                        # after a kill: a failure this soon came from it (4 s)
 # Failing a story level during its opening cutscene crashes the game, so a death received then
 # waits until you can move. This word (r13-0x6840, set at 0x80261320) is 1 while you play and 0
 # through a story cutscene (seen over three opening cutscenes).
 STORY_CONTROL_FLAG = 0x80469640
 CUTSCENE_SETTLE_POLLS = 4                    # polls to wait after a cutscene ends
+
+
+DEATH_TRIGGER_FAIL, DEATH_TRIGGER_KILL = 1, 2
+# Arcade League missions and Challenges work out their result (and trophy) from the state of the
+# match, so ending one early can award a trophy and leave the end-of-match data half set up (a
+# crash on leaving). There a received death kills the player instead, with the game's own
+# "kill this character" routine (0x8001EE1C, given the character's body): the game then takes a
+# life, respawns the player or fails the mission itself.
+KILL_CHARACTER_ROUTINE = 0x8001EE1C
 
 
 def _build_death_cave() -> tuple[int, ...]:
@@ -818,26 +869,605 @@ def _build_death_cave() -> tuple[int, ...]:
     def branch(index: int, target: int, link: int = 0) -> int:
         return _branch(DEATH_CAVE + 4 * index, target) | link
     return (
-        0x3D800000 | (DEATH_TRIGGER >> 16),    # lis r12, 0x8000
-        0x800C0000 | low,                      # lwz r0, trigger(r12)
-        0x2C000000,                            # cmpwi r0, 0
-        0x41820028,                            # beq -> carry on as normal
-        0x38000000,                            # li r0, 0
-        0x900C0000 | low,                      # stw r0, trigger(r12)
-        0x3C60803D,                            # lis r3, 0x803D
-        0x38630A98,                            # addi r3, r3, 0x0A98       (the setup)
-        0x8003005C,                            # lwz r0, 0x5C(r3)
-        0x64000001,                            # oris r0, r0, 1            (failed)
-        0x9003005C,                            # stw r0, 0x5C(r3)
-        branch(11, END_LEVEL_ROUTINE, 1),      # bl end the level
-        branch(12, STATE_ROUTINE_EXIT),
-        branch(13, STATE_PLAYING_HANDLER),
+        0x3D800000 | (DEATH_TRIGGER >> 16),    # 0  lis r12, 0x8000
+        0x800C0000 | low,                      # 1  lwz r0, trigger(r12)
+        0x2C000000,                            # 2  cmpwi r0, 0
+        0x41820058,                            # 3  beq 25              (carry on as normal)
+        0x38600000,                            # 4  li r3, 0
+        0x906C0000 | low,                      # 5  stw r3, trigger(r12)
+        0x2C000000 | DEATH_TRIGGER_KILL,       # 6  cmpwi r0, kill
+        0x41820024,                            # 7  beq 16
+        0x3C60803D,                            # 8  lis r3, 0x803D
+        0x38630A98,                            # 9  addi r3, r3, 0x0A98       (the setup)
+        0x8003005C,                            # 10 lwz r0, 0x5C(r3)
+        0x64000001,                            # 11 oris r0, r0, 1            (failed)
+        0x9003005C,                            # 12 stw r0, 0x5C(r3)
+        branch(13, END_LEVEL_ROUTINE, 1),      # 13 bl end the level
+        branch(14, STATE_ROUTINE_EXIT),        # 14
+        0x60000000,                            # 15 nop
+        0x3C600000 | (PLAYER_LIST >> 16),      # 16 lis r3, players@h
+        0x80630000 | (PLAYER_LIST & 0xFFFF),   # 17 lwz r3, players@l(r3)  (player 1)
+        0x2C030000,                            # 18 cmpwi r3, 0
+        0x41820018,                            # 19 beq 25
+        0x806313E0,                            # 20 lwz r3, 0x13E0(r3)      (the body)
+        0x2C030000,                            # 21 cmpwi r3, 0
+        0x4182000C,                            # 22 beq 25
+        branch(23, KILL_CHARACTER_ROUTINE, 1), # 23 bl kill it
+        0x60000000,                            # 24 nop
+        branch(25, STATE_PLAYING_HANDLER),     # 25 carry on as normal
     )
+
+
+# The code 1.0.x clients put there (fail only): replaced when found.
+OLD_DEATH_CAVE_CODE = (
+    0x3D800000 | (DEATH_TRIGGER >> 16), 0x800C0000 | (DEATH_TRIGGER & 0xFFFF), 0x2C000000, 0x41820028,
+    0x38000000, 0x900C0000 | (DEATH_TRIGGER & 0xFFFF), 0x3C60803D, 0x38630A98, 0x8003005C, 0x64000001,
+    0x9003005C, _branch(DEATH_CAVE + 44, END_LEVEL_ROUTINE) | 1, _branch(DEATH_CAVE + 48, STATE_ROUTINE_EXIT),
+    _branch(DEATH_CAVE + 52, STATE_PLAYING_HANDLER),
+)
 
 
 DEATH_CAVE_CODE = _build_death_cave()
 DEATH_AREA_END = DEATH_CAVE + 4 * len(DEATH_CAVE_CODE)
 assert DEATH_TRIGGER >= SCORE_AREA_END and DEATH_AREA_END <= 0x80003000
+
+# ---- Death Link Amnesty ----
+# Arcade League missions: a death is health (body +0x19C) going from above 0 to 0 or below. It is
+# only counted once the mission has gone on for a moment without failing, so a death that fails
+# a one-life mission is sent once, as a failure.
+DEATH_CONFIRM_POLLS = 6                      # 1.5 s
+
+# ---- In-game announcements ----
+# Every on-screen message goes through 0x8010D1A8(player, style, text, delay), the same routine
+# as in Future Perfect: r3 = player (0 = player 1), r4 = style 1-6, r5 = text, f1 = seconds before
+# it shows. "Checkpoint reached" is style 2 (0x8004D934). A message the same as one already on
+# screen is not added again. The client puts the text at MESSAGE_TEXT and the style at
+# MESSAGE_STYLE; a few instructions run from the level-state table's "playing" entry (before
+# Death Link's) pass them to the game and clear the style word, then wait MESSAGE_GAP frames
+# before taking the next one.
+SHOW_MESSAGE_ROUTINE = 0x8010D1A8
+MESSAGE_CAVE = 0x80002D80                    # up to 0x80002E00, where the mission lock starts
+MESSAGE_STYLE = 0x80002700                   # 0 = nothing waiting
+MESSAGE_DELAY = 0x80002704                   # float seconds before it shows: always 0
+MESSAGE_COOLDOWN = 0x80002708                # frames left before the next message may be taken
+MESSAGE_TEXT = 0x80002710                    # up to 0x80002800, where the award screen starts
+MESSAGE_TEXT_MAX = 0x80002800 - MESSAGE_TEXT - 1
+MESSAGE_GAP = 30                             # half a second: the client also waits (below)
+# The game's message queue for player 1 (0x803BB898, 0x1254 bytes per player): 16 entries of
+# 0x120 bytes from +0x38, each holding the style (+0), the text (+4, up to 256 bytes), a timer
+# in seconds (+0x108, starting at minus the delay and counting up) and the style's timings
+# (+0x10C, +0x114: for style 2, 1.5 and 2.5 seconds). The client only passes the next message on
+# once no message of the same style is still on screen.
+MESSAGE_QUEUE = 0x803BB898 + 0x38
+MESSAGE_QUEUE_ENTRIES = 16
+MESSAGE_ENTRY_SIZE = 0x120
+MESSAGE_ENTRY_TIMER, MESSAGE_ENTRY_STAGE_1, MESSAGE_ENTRY_STAGE_2 = 0x108, 0x10C, 0x114
+MESSAGE_SPARE_SECONDS = 0.25
+MESSAGE_STYLE_LINE, MESSAGE_STYLE_BIG = 2, 3
+
+
+def _build_message_cave() -> tuple[int, ...]:
+    def branch(index: int, target: int, link: int = 0) -> int:
+        return _branch(MESSAGE_CAVE + 4 * index, target) | link
+
+    def cond(index: int, bo: int, bi: int, target_index: int) -> int:
+        return (16 << 26) | (bo << 21) | (bi << 16) | ((4 * (target_index - index)) & 0xFFFC)
+
+    low = lambda address: address & 0xFFFF
+    out = 18
+    code = (
+        0x3D808000,                                    # 0  lis r12, 0x8000
+        0x808C0000 | low(MESSAGE_COOLDOWN),            # 1  lwz r4, cooldown(r12)
+        0x3484FFFF,                                    # 2  addic. r4, r4, -1
+        cond(3, 12, 0, 6),                             # 3  blt take            (cooldown was 0)
+        0x908C0000 | low(MESSAGE_COOLDOWN),            # 4  stw r4, cooldown(r12)
+        branch(5, MESSAGE_CAVE + 4 * out),             # 5  b out
+        0x80AC0000 | low(MESSAGE_STYLE),               # 6  take: lwz r5, style(r12)
+        0x2C050000,                                    # 7  cmpwi r5, 0
+        cond(8, 12, 2, out),                           # 8  beq out             (nothing waiting)
+        0x38000000,                                    # 9  li r0, 0
+        0x900C0000 | low(MESSAGE_STYLE),               # 10 stw r0, style(r12)
+        0x38000000 | MESSAGE_GAP,                      # 11 li r0, gap
+        0x900C0000 | low(MESSAGE_COOLDOWN),            # 12 stw r0, cooldown(r12)
+        0x7CA42B78,                                    # 13 mr r4, r5
+        0xC02C0000 | low(MESSAGE_DELAY),               # 14 lfs f1, delay(r12)
+        0x38AC0000 | low(MESSAGE_TEXT),                # 15 addi r5, r12, text
+        0x38600000,                                    # 16 li r3, 0 (player 1)
+        branch(17, SHOW_MESSAGE_ROUTINE, 1),           # 17 bl show the message
+        branch(18, DEATH_CAVE),                        # 18 out: b Death Link's check (then normal play)
+    )
+    assert MESSAGE_CAVE + 4 * len(code) <= ROUTINE
+    return code
+
+
+MESSAGE_CAVE_CODE = _build_message_cave()
+
+# ---- Award screen ("New Feature Unlocked") ----
+# After a mission the game lists what became available since the mission started: 0x8019B49C
+# compares maps, bot sets, characters, challenge sets, leagues, hats, Assault maps, game modes,
+# cheats and the Brick with a snapshot (taken by 0x8019B9BC) and writes up to 10 entries: heading
+# text IDs at 0x803EB2A8 and name text IDs 0x28 before them, shown 3 to a page by 0x8019AA80.
+# Who builds the list (seen with tools/ts2_award_watch.py):
+#   0x80188B2C  after a mission, when the game has no "something changed" flag: shows the award
+#               screen if the list is not empty (menu context 6 after an Arcade League mission)
+#   0x80188D70  another menu flow with the same check
+#   0x8019AA98, 0x8019B03C, 0x8019B12C  the award screen itself (opening, every frame, next page)
+# The builder ends `lwz r0, 0x44(r1)` (its return address), `mr r3, r29` (the number of entries).
+# The client replaces the `mr` with a jump to AWARD_CAVE, which reloads r0 before going back.
+# The client's entries are added on the award screen itself, and at 0x80188B2C only in menu
+# context 6, so that the screen also appears when only Archipelago items were found (forcing it
+# from a story level's menu flow crashed the game). They are never added at 0x80188D70. The cave
+# leaves out the game's "New Challenge Set available!" entries, moves the rest down, puts the
+# client's first entries (story levels, missions, challenges, cartridges) at the top and adds the
+# client's other entries at the end.
+# Every line is a text ID, looked up as (text table) + 4 * id with no limit, so an ID can be
+# chosen that makes the game read a text pointer kept in AWARD_POINTERS. AWARD_SHOWN is set when
+# the list is built with the client's entries.
+# Dolphin keeps running code it has already compiled, so the jump only takes effect if it is
+# written before the game first builds the list after booting. The client writes it as soon as it
+# finds the game, and also starts the award screen itself (screen record start pointer at
+# 0x803269A4) through AWARD_MENU_ROUTINE, which runs icbi on the jump first.
+AWARD_LIST = 0x803EB2A8                    # heading text IDs; name text IDs at AWARD_LIST - 0x28
+AWARD_NAME_OFFSET = -0x28
+AWARD_HOOK = 0x8019B9A8
+AWARD_HOOK_ORIGINAL = 0x7FA3EB78           # mr r3, r29
+AWARD_RETURN = 0x8019B9AC
+AWARD_AFTER_MISSION_CHECK = 0x80188B2C     # return address of the after-mission check
+AWARD_OTHER_CHECK = 0x80188D70
+AWARD_CONTEXT = 0x803ECE7C                 # the menu's +0x20AC word
+AWARD_CONTEXT_ARCADE = 6
+# The game's "New Challenge Set available!" entries are left out (the client lists the challenges).
+AWARD_HIDDEN_HEADING = 851
+AWARD_TEXT_TABLE = 0x80469618              # r13 - 0x6868: the game's text table
+AWARD_CAVE = 0x80002800                    # code, up to AWARD_MENU_ROUTINE
+AWARD_MENU_ROUTINE = 0x80002980
+AWARD_MENU_POINTER = 0x803269A4            # start of the award screen
+AWARD_MENU_NORMAL = 0x8019AA80
+AWARD_FRONT_COUNT = 0x800029A0             # the first FRONT_COUNT entries go at the top
+AWARD_COUNT = 0x800029A4
+AWARD_SHOWN = 0x800029A8
+AWARD_ENTRIES = 0x800029B0                 # 10 x (heading text ID, name text ID)
+AWARD_POINTERS = 0x80002A00                # 10 x (heading text pointer, name text pointer)
+AWARD_END = 0x80002A50
+AWARD_HEADING_TEXT = 0x80002300            # 10 x 32 bytes
+AWARD_NAME_TEXT = 0x80002440               # 10 x 64 bytes
+AWARD_TEXT_END = AWARD_NAME_TEXT + 10 * 64   # 0x800026C0 (the message text starts at 0x80002700)
+AWARD_MAX = 10
+AWARD_HEADING_MAX, AWARD_NAME_MAX = 31, 63
+assert AWARD_TEXT_END <= 0x80002700 and AWARD_END <= MESSAGE_CAVE
+
+# Headings, in the game's own style ("New Character available!"), all ending in "!".
+AWARD_STORY = "New Story Level available!"
+AWARD_MISSION = "New Mission available!"
+AWARD_CHALLENGE = "New Challenge available!"
+AWARD_CARTRIDGE = "New Cartridge available!"
+AWARD_WEAPON = "New Weapon available!"
+AWARD_MULTIPLIER = "Score Multiplier found!"
+AWARD_ITEM = "Archipelago Item found!"
+AWARD_BUFF = "{stat} Buff found!"
+AWARD_OTHER_PLAYER = "{player}'s Item!"
+AWARD_MULTIPLIER_NAMES = {BEHEAD_MULTIPLIER_ITEM_NAME: "Behead The Undead"}
+
+# Text never wraps on the award screen. A heading that is too wide for the box is drawn a little
+# smaller; a name that is too wide is drawn in a smaller font (font 9 -> 4, see 0x8019AE48), and
+# anything wider still runs off the sides. Widths in the font's own units (glyph advance + spacing
+# + kerning, from the glyphs at 0x803554A8 and the tables at 0x802BB1C8 / 0x802BB648): a name of
+# up to about 350 keeps the big font and one up to about 500 fits in the small one. Every name the
+# client writes for TimeSplitters 2's own items stays under 470.
+
+# Three of the game's own headings have no "!". Their entries in the text table are pointed at
+# copies that do. (text ID, the game's text, the text used instead, where the copy goes)
+AWARD_HEADING_FIXES: tuple[tuple[int, str, str, int], ...] = (
+    (2627, "New Assault Level available", "New Assault Level available!", 0x80002A60),
+    (2628, "New Weapon available", "New Weapon available!", 0x80002A80),
+    (2629, "New Arcade League available", "New Arcade League available!", 0x80002AA0),
+)
+AWARD_HEADING_FIX_SIZE = 0x20
+assert all(len(fixed) < AWARD_HEADING_FIX_SIZE for _i, _o, fixed, _a in AWARD_HEADING_FIXES)
+assert AWARD_END <= AWARD_HEADING_FIXES[0][3] \
+    and AWARD_HEADING_FIXES[-1][3] + AWARD_HEADING_FIX_SIZE <= MESSAGE_CAVE
+assert AWARD_HEADING_FIXES[-1][3] + AWARD_HEADING_FIX_SIZE <= RESISTANCE_CAVE \
+    and RESISTANCE_AREA_END <= MESSAGE_CAVE
+
+# Award screen line for a resistance: "New Resistance found!" / "Fire Damage 20%".
+AWARD_RESISTANCE = "New Resistance found!"
+
+
+def _build_resistance_cave() -> tuple[int, ...]:
+    def low(address: int) -> int:
+        return address & 0xFFFF
+    done = 14
+    code = [
+        0x3D808040,                               # 0  lis   r12, 0x8040
+        0x818C0000 | low(PLAYER_LIST),            # 1  lwz   r12, PLAYER_LIST(r12)   player 1
+        0x7C0CF840,                               # 2  cmplw r12, r31               being hit?
+        0x40820000 | (done - 3) * 4,              # 3  bne   done
+        0x817A0018,                               # 4  lwz   r11, 0x18(r26)         damage type
+        0x280B0000 | (DAMAGE_TYPE_COUNT - 1),     # 5  cmplwi r11, 41
+        0x41810000 | (done - 6) * 4,              # 6  bgt   done
+        0x3D808000,                               # 7  lis   r12, 0x8000
+        0x5560103A,                               # 8  slwi  r0, r11, 2
+        0x398C0000 | low(RESISTANCE_TABLE),       # 9  addi  r12, r12, TABLE
+        0x7C0C042E,                               # 10 lfsx  f0, r12, r0
+        0xC03A001C,                               # 11 lfs   f1, 0x1c(r26)          damage
+        0xEC210032,                               # 12 fmuls f1, f1, f0
+        0xD03A001C,                               # 13 stfs  f1, 0x1c(r26)
+        RESISTANCE_HOOK_ORIGINAL,                 # 14 done: lis r3, 0x803d (the replaced instruction)
+    ]
+    code.append(_branch(RESISTANCE_CAVE + 4 * len(code), RESISTANCE_HOOK + 4))
+    assert RESISTANCE_CAVE + 4 * len(code) <= RESISTANCE_FLUSH
+    return tuple(code)
+
+
+def _build_resistance_flush() -> tuple[int, ...]:
+    """The level state's "playing" entry: clear Dolphin's copy of the hooked code once, then the
+    message code (which carries on into Death Link's and the game's own)."""
+    low = RESISTANCE_FLUSHED & 0xFFFF
+    code = (
+        0x3D808000,                               # 0  lis   r12, 0x8000
+        0x816C0000 | low,                         # 1  lwz   r11, FLUSHED(r12)
+        0x2C0B0000,                               # 2  cmpwi r11, 0
+        0x40820000 | (10 - 3) * 4,                # 3  bne   9 + 1
+        0x3D600000 | RESISTANCE_HOOK >> 16,       # 4  lis   r11, hook@h
+        0x616B0000 | RESISTANCE_HOOK & 0xFFFF,    # 5  ori   r11, r11, hook@l
+        0x7C005FAC,                               # 6  icbi  0, r11
+        0x4C00012C,                               # 7  isync
+        0x39600001,                               # 8  li    r11, 1
+        0x916C0000 | low,                         # 9  stw   r11, FLUSHED(r12)
+        _branch(RESISTANCE_FLUSH + 40, MESSAGE_CAVE),   # 10 b message code
+    )
+    assert RESISTANCE_FLUSH + 4 * len(code) <= RESISTANCE_TABLE
+    return code
+
+
+RESISTANCE_CAVE_CODE = _build_resistance_cave()
+RESISTANCE_FLUSH_CODE = _build_resistance_flush()
+RESISTANCE_HOOK_BRANCH = _branch(RESISTANCE_HOOK, RESISTANCE_CAVE)
+assert RESISTANCE_TABLE + 4 * DAMAGE_TYPE_COUNT <= RESISTANCE_FLUSHED
+
+# ---- Archipelago Shop ----
+# The View Cutscenes menu (Options > View Cutscenes) becomes a shop. Its 13 rows each show one
+# shop location's item and price; A buys it with points. Points come from trophies (Bronze 10,
+# Silver 20, Gold 30, Platinum 40, a better trophy counting the ones below it), story levels
+# finished (Easy 15, Normal 35, Hard 50, likewise), every kill (1) and Trophy filler items.
+# Shop location k is row k % 13 of batch k // 13; each batch after the first needs one more
+# Progressive Shop Restock. Confirmed in game with tools/ts2_shop_test.py.
+# The menu (see the shop research notes):
+#   * screen start pointer 0x803269CC -> builder 0x80198E20, which we start through a wrapper
+#     that counts openings and clears Dolphin's copy of the builder (icbi) before it runs;
+#   * the builder's two "has this cutscene been seen?" calls become li r3, 1 (all rows show);
+#   * its rows' A-press callback (lis/addi at 0x80198F48) becomes ours: when the row may be
+#     bought (AFFORD), switch it to its prepared text (NEXT_TEXT), re-centre it (0x80213BD4) and
+#     report it in SHOP_PICK; otherwise report it + 0x100. A cutscene never plays;
+#   * box width, row font (and the unchanged height / position) are li values in the builder;
+#   * row texts: each cutscene's text ID (table 0x802C0C30, +0xC) is pointed at a text slot of
+#     ours through the text table trick (award_text_id); the menu's title (text 2632), "View
+#     Cutscenes" (434) and "Options" (429) entries in the text table point straight at our texts.
+# The client never changes a text the menu is showing (its centring is worked out when the menu
+# is built): each row has two buffers, and only the one not on screen is written.
+SHOP_ROWS = 13
+SHOP_SIZES = (13, 26, 39, 52, 65)
+SHOP_MAX = SHOP_SIZES[-1]
+SHOP_RESTOCK_ITEM_NAME = "Progressive Shop Restock"
+TROPHY_POINTS = (10, 20, 30, 40)                 # per grade, Bronze to Platinum
+STORY_POINTS = (15, 35, 50)                      # per difficulty, Easy to Hard
+KILL_POINTS = 1
+# Trophy filler items: points only. (grade, points, weight when picking one at random)
+TROPHY_FILLERS = (("Bronze", 10, 4), ("Silver", 20, 3), ("Gold", 30, 2), ("Platinum", 40, 1))
+TROPHY_FILLER_COPIES = 20                        # copies joining the weapon buff / resistance mix
+TROPHY_FILLER_WEIGHT = 1.0
+# Price ranges by what the item is (points).
+SHOP_PRICES = {"progression": (15, 200), "useful": (5, 75), "filler": (1, 15)}
+SHOP_STORY_PRICES = (85, 200)                    # story levels (this game's or Future Perfect's)
+
+
+def shop_location_name(index: int) -> str:
+    return f"Archipelago Shop Item {index + 1}"
+
+
+def shop_location_id(index: int) -> int:
+    return BASE_ID + 950 + index
+
+
+def trophy_filler_item_name(grade: str) -> str:
+    return f"{grade} Trophy"
+
+
+TROPHY_FILLER_ITEM_NAMES: tuple[str, ...] = tuple(trophy_filler_item_name(t[0]) for t in TROPHY_FILLERS)
+TROPHY_FILLER_POINTS = {trophy_filler_item_name(grade): points for grade, points, _w in TROPHY_FILLERS}
+
+SHOP_MENU_POINTER = 0x803269CC
+SHOP_MENU_BUILDER = 0x80198E20
+SHOP_CUTSCENE_TABLE = 0x802C0C30                 # 13 x 16 bytes, +0xC = the row's text ID
+SHOP_TEXT_IDS = {"title": 2632, "menu": 434, "options": 429}
+SHOP_ORIGINAL_TEXT = {"title": "Select cutscene", "menu": "View Cutscenes", "options": "Options"}
+SHOP_NEW_TEXT = {"menu": "Archipelago Shop", "options": "Options & Shop"}
+SHOP_SELECTED_ROW = 0x8021A78C                   # (list) -> the row the cursor is on
+SHOP_CENTRE_ROW = 0x80213BD4                     # (row) -> x offset centring its text (row +0x34)
+SHOP_WIDTH, SHOP_FONT = 600, 4                   # the user's choice (the game's: 270, font 21)
+# (address, the game's word, ours)
+SHOP_CODE_CHANGES = (
+    (0x80198E6C, 0x3880010E, 0x38800000 | SHOP_WIDTH),     # li r4, box width
+    (0x80198F20, 0x38800015, 0x38800000 | SHOP_FONT),      # li r4, row font
+    (0x80198E94, 0x4BFA57B9, 0x38600001),                  # bl 0x8013E64C -> li r3, 1
+    (0x80198ED4, 0x4BFA5779, 0x38600001),
+    (0x80198F48, 0x3C60801A, 0x3C608000),                  # lis r3, high(callback)
+    (0x80198F4C, 0x38039094, 0x38031880),                  # addi r0, r3, low(callback)
+)
+# Low memory (0x80001800-0x8000180B is the system's; ours ends before the award screen's 0x80002300).
+SHOP_WRAPPER = 0x80001840
+SHOP_CALLBACK = 0x80001880
+SHOP_PICK = 0x80001910                           # row + 1 of the last A press (+0x100: not bought)
+SHOP_OPENED = 0x80001914                         # how many times the menu has been opened
+SHOP_AFFORD = 0x80001920                         # 13 words: 1 = A buys this row now
+SHOP_NEXT_TEXT = 0x80001960                      # 13 words: the text a row switches to when bought
+SHOP_SLOTS = 0x800019A0                          # 16 text pointers: rows, title, menu, options
+SHOP_TEXTS = 0x80001A00                          # 26 x 80 bytes (two per row), then 3 x 64
+SHOP_ROW_TEXT_SIZE, SHOP_TEXT_SIZE = 80, 64
+SHOP_TITLE, SHOP_MENU, SHOP_OPTIONS = 26, 27, 28  # text buffer numbers
+SHOP_AREA_END = SHOP_TEXTS + 26 * SHOP_ROW_TEXT_SIZE + 3 * SHOP_TEXT_SIZE
+assert SHOP_AREA_END <= AWARD_HEADING_TEXT
+assert SHOP_CODE_CHANGES[-1][2] == 0x38030000 | (SHOP_CALLBACK & 0xFFFF)
+
+
+def shop_text_address(n: int) -> int:
+    if n < 2 * SHOP_ROWS:
+        return SHOP_TEXTS + SHOP_ROW_TEXT_SIZE * n
+    return SHOP_TEXTS + SHOP_ROW_TEXT_SIZE * 2 * SHOP_ROWS + SHOP_TEXT_SIZE * (n - 2 * SHOP_ROWS)
+
+
+def shop_text_size(n: int) -> int:
+    return SHOP_ROW_TEXT_SIZE if n < 2 * SHOP_ROWS else SHOP_TEXT_SIZE
+
+
+def _build_shop_wrapper() -> tuple[int, ...]:
+    low = SHOP_OPENED & 0xFFFF
+    code = [
+        0x3D608000,                              # lis   r11, 0x8000
+        0x818B0000 | low,                        # lwz   r12, OPENED(r11)
+        0x398C0001,                              # addi  r12, r12, 1
+        0x918B0000 | low,                        # stw   r12, OPENED(r11)
+        0x3D800000 | SHOP_MENU_BUILDER >> 16,    # lis   r12, builder@h
+        0x618C0000 | SHOP_MENU_BUILDER & 0xFFFF, # ori   r12, r12, builder@l
+        0x3960000A,                              # li    r11, 10      (cache lines, to 0x80198F60)
+        0x7D6903A6,                              # mtctr r11
+        0x7C0067AC,                              # loop: icbi 0, r12
+        0x398C0020,                              # addi  r12, r12, 0x20
+        0x4200FFF8,                              # bdnz  loop
+        0x4C00012C,                              # isync
+    ]
+    code.append(_branch(SHOP_WRAPPER + 4 * len(code), SHOP_MENU_BUILDER))
+    assert SHOP_WRAPPER + 4 * len(code) <= SHOP_CALLBACK
+    assert all(SHOP_MENU_BUILDER <= a < SHOP_MENU_BUILDER + 10 * 32 for a, _g, _o in SHOP_CODE_CHANGES)
+    return tuple(code)
+
+
+def _build_shop_callback() -> tuple[int, ...]:
+    def low(address: int) -> int:
+        return address & 0xFFFF
+    code = [
+        0x9421FFE0,                              # 0  stwu  r1, -0x20(r1)
+        0x7C0802A6,                              # 1  mflr  r0
+        0x90010024,                              # 2  stw   r0, 0x24(r1)
+        0x93E1001C,                              # 3  stw   r31, 0x1c(r1)
+        _branch(SHOP_CALLBACK + 16, SHOP_SELECTED_ROW) | 1,   # 4  bl the selected row
+        0x7C7F1B79,                              # 5  mr.   r31, r3
+        0x41820000 | (29 - 6) * 4,               # 6  beq   out
+        0x809F0018,                              # 7  lwz   r4, 0x18(r31)       row number
+        0x3CA08000,                              # 8  lis   r5, 0x8000
+        0x5486103A,                              # 9  slwi  r6, r4, 2
+        0x38E50000 | low(SHOP_AFFORD),           # 10 addi  r7, r5, AFFORD
+        0x7C07302E,                              # 11 lwzx  r0, r7, r6
+        0x2C000000,                              # 12 cmpwi r0, 0
+        0x38840001,                              # 13 addi  r4, r4, 1           pick = row + 1
+        0x40820000 | (17 - 14) * 4,              # 14 bne   buy
+        0x38840100,                              # 15 addi  r4, r4, 0x100       not bought
+        0x48000000 | (28 - 16) * 4,              # 16 b     store
+        0x38000000,                              # 17 buy: li r0, 0
+        0x7C07312E,                              # 18 stwx  r0, r7, r6          not twice
+        0x38E50000 | low(SHOP_NEXT_TEXT),        # 19 addi  r7, r5, NEXT_TEXT
+        0x7C07302E,                              # 20 lwzx  r0, r7, r6
+        0x901F0020,                              # 21 stw   r0, 0x20(r31)       the row's new text
+        0x90810008,                              # 22 stw   r4, 0x8(r1)
+        0x7FE3FB78,                              # 23 mr    r3, r31
+        _branch(SHOP_CALLBACK + 96, SHOP_CENTRE_ROW) | 1,     # 24 bl centre it
+        0x907F0034,                              # 25 stw   r3, 0x34(r31)
+        0x80810008,                              # 26 lwz   r4, 0x8(r1)
+        0x3CA08000,                              # 27 lis   r5, 0x8000
+        0x90850000 | low(SHOP_PICK),             # 28 store: stw r4, PICK(r5)
+        0x83E1001C,                              # 29 out: lwz r31, 0x1c(r1)
+        0x80010024,                              # 30 lwz   r0, 0x24(r1)
+        0x7C0803A6,                              # 31 mtlr  r0
+        0x38210020,                              # 32 addi  r1, r1, 0x20
+        0x4E800020,                              # 33 blr
+    ]
+    assert SHOP_CALLBACK + 4 * len(code) <= SHOP_PICK
+    return tuple(code)
+
+
+SHOP_WRAPPER_CODE = _build_shop_wrapper()
+SHOP_CALLBACK_CODE = _build_shop_callback()
+# Shop hints (the "Shop Hints" option).
+SHOP_HINTS_NONE, SHOP_HINTS_ALL, SHOP_HINTS_PROGRESSION = 0, 1, 2
+
+# Items bought in the shop are kept off the award screen. The client's own lines simply leave them
+# out; the game's own lines (characters, cheats, hats, maps, modes, the Brick) come from comparing
+# what is unlocked with a snapshot taken earlier (0x8019B9BC, kept in the menu data at
+# 0x803EADD0), so the client marks such an item as already unlocked in that snapshot.
+AWARD_SNAPSHOT = 0x803EADD0
+AWARD_SNAPSHOT_CHARACTERS = AWARD_SNAPSHOT + 0x268     # 127 words, by character entry
+AWARD_SNAPSHOT_MAPS = AWARD_SNAPSHOT + 0x464           # 19 words, by map entry
+AWARD_SNAPSHOT_CHEATS = AWARD_SNAPSHOT + 0x194         # 13 words, by cheat entry
+AWARD_SNAPSHOT_HATS = AWARD_SNAPSHOT + 0x1C8           # 5 words, by hat
+AWARD_SNAPSHOT_MODES = AWARD_SNAPSHOT + 0x1DC          # 19 words, by mode number
+AWARD_SNAPSHOT_BRICK = 0x80468FFC                      # r13-0x6E84
+AWARD_SNAPSHOT_ASSAULT = {"Hangar": 0x80469000, "Scrapyard": 0x80469004}   # r13-0x6E80 / -0x6E7C
+
+
+def _native_award_slots() -> dict[str, tuple[int, ...]]:
+    slots: dict[str, list[int]] = {}
+    for entry, (name, _address, _number) in enumerate(CHARACTERS):
+        slots.setdefault(character_item_name(name), []).append(AWARD_SNAPSHOT_CHARACTERS + 4 * entry)
+    for name, _address, entry in MAPS:
+        slots.setdefault(map_item_name(name), []).append(AWARD_SNAPSHOT_MAPS + 4 * entry)
+    for name, address in AWARD_SNAPSHOT_ASSAULT.items():
+        slots.setdefault(map_item_name(name), []).append(address)
+    for name, _address, entry in CHEATS:
+        slots.setdefault(cheat_item_name(name), []).append(AWARD_SNAPSHOT_CHEATS + 4 * entry)
+    for name, _address, number in HATS:
+        slots.setdefault(hat_item_name(name), []).append(AWARD_SNAPSHOT_HATS + 4 * number)
+    for name, _address, number in MODES:
+        slots.setdefault(mode_item_name(name), []).append(AWARD_SNAPSHOT_MODES + 4 * number)
+    slots.setdefault(weapon_item_name("Brick"), []).append(AWARD_SNAPSHOT_BRICK)
+    return {name: tuple(addresses) for name, addresses in slots.items()}
+
+
+NATIVE_AWARD_SLOTS = _native_award_slots()
+
+# TimeSplitters: Future Perfect (the user's other apworld): its items are shortened in this game's
+# shop and award screen the same way it does itself. Its story level items are priced as story
+# levels in the shop.
+TSFP_GAME_NAME = "TimeSplitters Future Perfect"
+TSFP_STORY_ITEM_NAMES = (
+    "2401 Time To Split", "1924 Scotland the Brave", "1969 The Russian Connection", "1969 The Khallos Express",
+    "1994 Mansion of Madness", "1994 What Lies Below", "2052 Breaking and Entering", "2052 You Genius, U Genix",
+    "2243 Machine Wars", "2243 Something to Crow About", "1924 You Take The High Road", "2401 The Hooded Man",
+    "1924 Future Perfect", "Progressive Story Level",
+)
+MISSION_ITEM_PREFIXES = ("AL - ", "HL - ", "EL - ", "Challenge - ")
+
+
+def tsfp_short_item_name(name: str) -> str:
+    """"AL - One Gun Fun - Rockets 101" -> "Rockets 101" (split at the first two " - ", so a mission
+    name with a dash of its own stays whole); "Weapon Buff - Plasma Autorifle - +25% Reserve Ammo"
+    -> "Plasma Autorifle +25% Reserve Ammo"; anything else as it is."""
+    if name.startswith(MISSION_ITEM_PREFIXES):
+        parts = name.split(" - ", 2)
+        if len(parts) == 3:
+            return parts[2]
+    if name.startswith("Weapon Buff - "):
+        parts = name.split(" - ", 2)
+        if len(parts) == 3:
+            return f"{parts[1]} {parts[2]}"
+    return name
+
+
+# Kills: player 1's kills this match, a float at the start of the per-match stats (0x803C1200,
+# 0x754 bytes per player; stat 0 = kills, see the arcade award notes).
+PLAYER_KILLS = 0x803C1200
+
+
+def _build_award_cave() -> tuple[int, ...]:
+    """Entered with r29 = the game's list length; leaves through AWARD_RETURN with the new length in
+    r3 and the game's return address back in r0."""
+    def d(op, rt, ra, imm): return (op << 26) | (rt << 21) | (ra << 16) | (imm & 0xFFFF)
+    def x(rt, ra, rb, xo): return (31 << 26) | (rt << 21) | (ra << 16) | (rb << 11) | (xo << 1)
+    def slwi(ra, rs, n): return (21 << 26) | (rs << 21) | (ra << 16) | (n << 11) | ((31 - n) << 1)
+    def cmpwi(ra, imm): return d(11, 0, ra, imm)
+    def cmpw(ra, rb): return x(0, ra, rb, 0)
+    low = lambda address: address - 0x80000000
+    high = (AWARD_LIST + 0x8000) >> 16
+    names = AWARD_NAME_OFFSET
+    labels: dict[str, int] = {}
+    code: list = []
+    def label(name): labels[name] = len(code)
+    def bc(kind, name): code.append((kind, name))          # resolved below
+    code += [x(29, 3, 29, 444),                          # mr r3, r29                 game's length
+             d(32, 0, 1, 0x44),                          # lwz r0, 0x44(r1)           who asked
+             d(15, 11, 0, AWARD_OTHER_CHECK >> 16),
+             d(24, 11, 11, AWARD_OTHER_CHECK & 0xFFFF),
+             cmpw(0, 11)]
+    bc("beq", "return")                                  # never at the other menu flow's check
+    code += [d(15, 11, 0, AWARD_AFTER_MISSION_CHECK >> 16),
+             d(24, 11, 11, AWARD_AFTER_MISSION_CHECK & 0xFFFF),
+             cmpw(0, 11)]
+    bc("bne", "go")                                      # the award screen itself: always
+    code += [d(15, 11, 0, (AWARD_CONTEXT + 0x8000) >> 16),
+             d(32, 11, 11, AWARD_CONTEXT & 0xFFFF),
+             cmpwi(11, AWARD_CONTEXT_ARCADE)]
+    bc("bne", "return")                                  # after-mission check: Arcade League only
+    label("go")
+    code += [d(15, 12, 0, 0x8000),                       # lis r12, 0x8000
+             d(36, 12, 12, low(AWARD_SHOWN)),            # stw r12, SHOWN(r12)
+             d(32, 5, 12, low(AWARD_FRONT_COUNT)),       # lwz r5, FRONT_COUNT(r12)   F
+             d(32, 4, 12, low(AWARD_COUNT)),             # lwz r4, COUNT(r12)         all entries
+             d(15, 6, 0, high),                          # lis r6, list@ha
+             d(14, 6, 6, AWARD_LIST - (high << 16)),     # addi r6, r6, list@l
+             d(14, 7, 0, 0), d(14, 8, 0, 0)]             # j = 0, kept = 0
+    label("filter")                                      # drop the game's entries with a hidden heading
+    code.append(cmpw(7, 3)); bc("bge", "filtered")
+    code += [slwi(10, 7, 2), x(0, 6, 10, 23), cmpwi(0, AWARD_HIDDEN_HEADING)]
+    bc("beq", "drop")
+    code += [slwi(11, 8, 2), x(0, 6, 11, 151),           # heading
+             d(14, 10, 10, names), d(14, 11, 11, names),
+             x(0, 6, 10, 23), x(0, 6, 11, 151),          # name
+             d(14, 8, 8, 1)]
+    label("drop")
+    code.append(d(14, 7, 7, 1)); bc("b", "filter")
+    label("filtered")
+    code += [x(8, 3, 8, 444),                            # mr r3, r8                  entries kept
+             d(14, 7, 3, -1)]                            # addi r7, r3, -1            i = last entry
+    label("shift")                                       # move the game's entries down by F
+    code.append(cmpwi(7, 0)); bc("blt", "front")
+    code += [x(10, 7, 5, 266), cmpwi(10, AWARD_MAX)]
+    bc("bge", "next")
+    code += [slwi(11, 7, 2), slwi(10, 10, 2),
+             x(0, 6, 11, 23), x(0, 6, 10, 151),          # lwzx r0,r6,r11 / stwx r0,r6,r10
+             d(14, 11, 11, names), d(14, 10, 10, names),
+             x(0, 6, 11, 23), x(0, 6, 10, 151)]
+    label("next")
+    code.append(d(14, 7, 7, -1)); bc("b", "shift")
+    label("front")                                       # the client's first F entries at the top
+    code += [d(14, 7, 0, 0), d(14, 9, 12, low(AWARD_ENTRIES))]
+    label("front_loop")
+    code.append(cmpw(7, 5)); bc("bge", "front_done")
+    code += [slwi(10, 7, 2), d(32, 0, 9, 0), x(0, 6, 10, 151), d(14, 10, 10, names),
+             d(32, 0, 9, 4), x(0, 6, 10, 151), d(14, 9, 9, 8), d(14, 7, 7, 1)]
+    bc("b", "front_loop")
+    label("front_done")
+    code += [x(3, 3, 5, 266), cmpwi(3, AWARD_MAX)]       # length = min(length + F, 10)
+    bc("ble", "back")
+    code.append(d(14, 3, 0, AWARD_MAX))
+    label("back")                                        # the client's other entries at the end
+    code.append(cmpw(7, 4)); bc("bge", "return")
+    code.append(cmpwi(3, AWARD_MAX)); bc("bge", "return")
+    code += [slwi(10, 3, 2), d(32, 0, 9, 0), x(0, 6, 10, 151), d(14, 10, 10, names),
+             d(32, 0, 9, 4), x(0, 6, 10, 151), d(14, 9, 9, 8), d(14, 7, 7, 1), d(14, 3, 3, 1)]
+    bc("b", "back")
+    label("return")
+    code.append(d(32, 0, 1, 0x44))                       # lwz r0, 0x44(r1): the game loaded its return
+    code.append(("b", "@return"))                        # address there just before the hooked line
+    conditions = {"blt": (12, 0), "bge": (4, 0), "ble": (4, 1), "beq": (12, 2), "bne": (4, 2)}
+    words = []
+    for k, item in enumerate(code):
+        if isinstance(item, tuple):
+            kind, name = item
+            offset = (AWARD_RETURN - (AWARD_CAVE + 4 * k)) if name == "@return" else 4 * (labels[name] - k)
+            if kind == "b":
+                item = 0x48000000 | (offset & 0x03FFFFFC)
+            else:
+                bo, bi = conditions[kind]
+                item = (16 << 26) | (bo << 21) | (bi << 16) | (offset & 0xFFFC)
+        words.append(item)
+    assert AWARD_CAVE + 4 * len(words) <= AWARD_MENU_ROUTINE
+    return tuple(words)
+
+
+AWARD_CAVE_CODE = _build_award_cave()
+AWARD_HOOK_BRANCH = _branch(AWARD_HOOK, AWARD_CAVE)
+AWARD_MENU_ROUTINE_CODE = (
+    0x3D800000 | AWARD_HOOK >> 16,                 # lis  r12, high
+    0x618C0000 | AWARD_HOOK & 0xFFFF,              # ori  r12, r12, low
+    0x7C0067AC,                                    # icbi 0, r12
+    0x4C00012C,                                    # isync
+    _branch(AWARD_MENU_ROUTINE + 16, AWARD_MENU_NORMAL),
+)
+assert AWARD_MENU_ROUTINE + 4 * len(AWARD_MENU_ROUTINE_CODE) <= AWARD_FRONT_COUNT
+
+
+def award_text_id(table: int, pointer_address: int) -> int:
+    """A text ID that the game's text lookup turns into the pointer stored at pointer_address."""
+    return ((pointer_address - table) & 0xFFFFFFFF) >> 2
 
 # ---- Easier trophy requirements ----
 # Each mission record (e.g. Top Shot's at 0x80318AFC, which starts with its name and description
@@ -921,6 +1551,7 @@ LOCATION_NAME_TO_ID.update({anaconda_location_name(step * ANACONDA_STEP): anacon
 LOCATION_NAME_TO_ID.update({name: retroracer_location_id(k) for k, name in enumerate(retroracer_location_names())})
 LOCATION_NAME_TO_ID.update({astrolander_location_name(level): astrolander_location_id(level)
                             for level in range(1, ASTROLANDER_LEVEL_COUNT + 1)})
+LOCATION_NAME_TO_ID.update({shop_location_name(k): shop_location_id(k) for k in range(SHOP_MAX)})
 assert len(set(LOCATION_NAME_TO_ID.values())) == len(LOCATION_NAME_TO_ID)
 
 ITEM_NAME_TO_ID: dict[str, int] = {
@@ -933,6 +1564,9 @@ ITEM_NAME_TO_ID: dict[str, int] = {
     STARTING_ARMOUR_ITEM_NAME: BASE_ID + 6002,      # (6001 was the Monkeying Around multiplier)
     **{name: BASE_ID + 7000 + k for k, name in enumerate(WEAPON_BUFF_ITEM_NAMES)},
     **{name: BASE_ID + 7500 + k for k, name in enumerate(TRAP_ITEM_NAMES)},
+    **{name: BASE_ID + 7600 + k for k, name in enumerate(RESISTANCE_ITEM_NAMES)},
+    SHOP_RESTOCK_ITEM_NAME: BASE_ID + 7700,
+    **{name: BASE_ID + 7710 + k for k, name in enumerate(TROPHY_FILLER_ITEM_NAMES)},
     **{character_item_name(c[0]): BASE_ID + 3000 + c[2] for c in CHARACTERS},
     **{cheat_item_name(c[0]): BASE_ID + 4000 + c[2] for c in CHEATS},
     **{hat_item_name(h[0]): BASE_ID + 4100 + h[2] for h in HATS},
@@ -940,5 +1574,5 @@ ITEM_NAME_TO_ID: dict[str, int] = {
     **{mode_item_name(m[0]): BASE_ID + 4300 + m[2] for m in MODES},
     **{weapon_item_name(w[0]): BASE_ID + 5000 + w[1] for w in WEAPON_ENTRIES},
 }
-assert len(ITEM_NAME_TO_ID) == (MISSION_COUNT + len(STORY_LEVELS) + 4 + len(CARTRIDGES) + len(WEAPON_BUFFS) + len(TRAPS) + len(CHARACTERS) + len(CHEATS) + len(HATS)
+assert len(ITEM_NAME_TO_ID) == (MISSION_COUNT + len(STORY_LEVELS) + 4 + len(CARTRIDGES) + len(WEAPON_BUFFS) + len(TRAPS) + len(RESISTANCES) + 1 + len(TROPHY_FILLERS) + len(CHARACTERS) + len(CHEATS) + len(HATS)
                                + len(MAPS) + len(MODES) + len(WEAPON_ENTRIES))
