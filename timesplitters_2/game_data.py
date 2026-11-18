@@ -23,7 +23,7 @@ UNLOCKS     The game decides whether something is unlocked by evaluating a 5-wor
 from dataclasses import dataclass
 
 GAME_NAME = "TimeSplitters 2"
-WORLD_VERSION = "1.2.0"     # keep in step with archipelago.json
+WORLD_VERSION = "1.2.1"     # keep in step with archipelago.json
 
 GAME_ID_ADDRESS = 0x80000000
 GAME_ID: bytes | None = b"GTSE4F"
@@ -496,6 +496,14 @@ STORY_OBJECTIVES: tuple[tuple[int, int, int, int, str, tuple[int, int, int]], ..
     (9, 2, 0x802C0D80, 0x45D, 'Escape from the Spacestation', (0, 0, 0)),
     (9, 3, 0x802C0DA4, 0xA93, 'Collect the Crystals', (0, 0, 0)),
 )
+
+
+# Objectives that only exist on Easy (role -1 on Normal and Hard): with "Skip Easy Mode Exclusive
+# Story Objectives", completing their level on Normal or Hard checks them. (level, location ID)
+def _easy_only_objectives() -> tuple[tuple[int, int], ...]:
+    return tuple((level, objective_location_id(level, record))
+                 for level, record, _a, _t, _name, roles in STORY_OBJECTIVES
+                 if roles[0] != -1 and roles[1] == -1 and roles[2] == -1)
 
 
 def objective_location_name(level: int, name: str) -> str:
@@ -1544,6 +1552,7 @@ LOCATION_NAME_TO_ID.update({
     for level, record, _address, _text, name, _roles in STORY_OBJECTIVES
 })
 LOCATION_NAME_TO_ID.update({name: location_id for name, location_id, _missions, _kind in MILESTONES})
+EASY_ONLY_OBJECTIVES = _easy_only_objectives()
 LOCATION_NAME_TO_ID.update({cartridge_location_name(c[0], c[1]): cartridge_location_id(k)
                             for k, c in enumerate(CARTRIDGES)})
 LOCATION_NAME_TO_ID.update({anaconda_location_name(step * ANACONDA_STEP): anaconda_location_id(step * ANACONDA_STEP)

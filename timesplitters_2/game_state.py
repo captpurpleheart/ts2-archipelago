@@ -269,6 +269,15 @@ def story_location_ids(mem) -> set[int]:
     return found
 
 
+def easy_only_objective_ids(mem) -> set[int]:
+    """Easy-only objectives whose level has been completed on Normal or Hard."""
+    words = _story_words(mem)
+    if words is None:
+        return set()
+    beaten = words[1] | words[2]
+    return {location for level, location in game_data.EASY_ONLY_OBJECTIVES if beaten >> level & 1}
+
+
 def story_levels_beaten(mem) -> int:
     """How many story levels other than the last are complete (on any difficulty)."""
     words = _story_words(mem)

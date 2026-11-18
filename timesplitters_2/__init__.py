@@ -159,6 +159,15 @@ class ExcludeHardStory(DefaultOnToggle):
     display_name = "Exclude Hard Story Locations"
 
 
+class SkipEasyObjectives(Toggle):
+    """
+    Story objectives that only exist on Easy (2019 NeoTokyo's "Eliminate the Gang Leader before She
+    Escapes") are checked automatically when you complete that level on Normal or Hard, so you
+    don't have to play it again on Easy.
+    """
+    display_name = "Skip Easy Mode Exclusive Story Objectives"
+
+
 class ExcludeAllPlatinum(Toggle):
     """Never put anything important on a Platinum trophy."""
     display_name = "Exclude All Platinum Trophies"
@@ -399,6 +408,7 @@ class Ts2Options(PerGameCommonOptions):
     trophy_grade: TrophyGrade
     exclude_story_mode: ExcludeStoryMode
     exclude_hard_story: ExcludeHardStory
+    skip_easy_objectives: SkipEasyObjectives
     exclude_all_platinum: ExcludeAllPlatinum
     exclude_platinum_trophies: ExcludePlatinumTrophies
     easier_top_shot: EasierTopShot
@@ -438,7 +448,7 @@ class Ts2WebWorld(WebWorld):
         OptionGroup("Goal Options - 2401 Space Station", [StoryLevelsRequired, TrophiesRequired,
                                                           TrophiesRequiredGrade]),
         OptionGroup("Goal Options - Trophy Hunt", [TrophyHuntSetting, TrophyGrade, ExcludeStoryMode]),
-        OptionGroup("Difficulty Settings", [ExcludeHardStory, ExcludeAllPlatinum, ExcludePlatinumTrophies,
+        OptionGroup("Difficulty Settings", [ExcludeHardStory, SkipEasyObjectives, ExcludeAllPlatinum, ExcludePlatinumTrophies,
                                             EasierTopShot]),
         OptionGroup("Milestone Locations", [ArcadeGroupMilestones, ChallengeGroupMilestones, LeagueMilestones,
                                             AllChallengesMilestone]),
@@ -548,6 +558,7 @@ class Ts2World(World):
                 getattr(self.options, option).value = passthrough.get(option, 1)
             self.options.story_levels_required.value = passthrough["story_levels_required"]
             self.options.exclude_hard_story.value = passthrough["exclude_hard_story"]
+            self.options.skip_easy_objectives.value = passthrough.get("skip_easy_objectives", 0)
             self.options.trophy_grade.value = passthrough["trophy_grade"]
             self.options.trophies_required.value = passthrough.get("trophies_required", 0)
             self.options.trophies_required_grade.value = passthrough.get("trophies_required_grade", 1)
@@ -891,6 +902,7 @@ class Ts2World(World):
             "all_challenges_milestone": int(bool(self.options.all_challenges_milestone)),
             "story_levels_required": int(self.options.story_levels_required.value),
             "exclude_hard_story": int(bool(self.options.exclude_hard_story)),
+            "skip_easy_objectives": int(bool(self.options.skip_easy_objectives)),
             "trophy_grade": int(self.options.trophy_grade.value),
             "exclude_all_platinum": int(bool(self.options.exclude_all_platinum)),
             "exclude_platinum_trophies": sorted(self.options.exclude_platinum_trophies.value),

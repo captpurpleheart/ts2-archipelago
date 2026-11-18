@@ -96,6 +96,7 @@ class Ts2Context(CommonContext):
         self.score_logged: str = ""                 # last score multiplier patch state logged
         self.multipliers_on: bool = False           # either multiplier is in this game (slot data)
         self.resistances_on: bool = False           # damage resistances are in this game (slot data)
+        self.skip_easy_objectives: bool = False     # Easy-only objectives checked by Normal/Hard (slot data)
         # Archipelago Shop (slot data, and the server's data storage for kills and points spent)
         self.shop_size: int = 0
         self.shop_prices: list[int] = []
@@ -236,6 +237,7 @@ class Ts2Context(CommonContext):
             self.trophy_hunt_setting = int(slot_data.get("trophy_hunt_setting", game_data.HUNT_ALL))
             self.multipliers_on = bool(slot_data.get("behead_multiplier", 0))
             self.resistances_on = bool(slot_data.get("include_damage_resistances", 0))
+            self.skip_easy_objectives = bool(slot_data.get("skip_easy_objectives", 0))
             self.shop_size = int(slot_data.get("shop_locations", 0)) if slot_data.get("include_archipelago_shop") else 0
             self.shop_prices = list(slot_data.get("shop_prices", []))
             self.shop_hints = int(slot_data.get("shop_hints", game_data.SHOP_HINTS_ALL))
@@ -850,6 +852,8 @@ async def dolphin_sync_task(ctx: Ts2Context) -> None:
                 # soon as it is back.
                 if ctx.data_ok:
                     ctx.objectives_found |= game_state.completed_objective_ids(dolphin)
+                    if ctx.skip_easy_objectives:
+                        ctx.objectives_found |= game_state.easy_only_objective_ids(dolphin)
                     # A cartridge reads 1 only until the client next sets it to 0 or 2, so it is
                     # noted here, before that happens, and remembered like the objectives.
                     ctx.objectives_found |= game_state.found_cartridge_ids(dolphin)
